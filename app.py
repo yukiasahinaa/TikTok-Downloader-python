@@ -1,23 +1,11 @@
-from flask import Flask, render_template, request, redirect, url_for, send_file
+from flask import Flask, render_template, request, send_file
 import yt_dlp
 import os
-from datetime import datetime, timedelta
-import threading
-import time
+from datetime import datetime
+from threading import Timer
 
 app = Flask(__name__)
 app.config['DOWNLOAD_FOLDER'] = 'downloads'
-
-def delete_old_files():
-    while True:
-        now = datetime.now()
-        for filename in os.listdir(app.config['DOWNLOAD_FOLDER']):
-            file_path = os.path.join(app.config['DOWNLOAD_FOLDER'], filename)
-            if os.path.isfile(file_path):
-                file_creation_time = datetime.fromtimestamp(os.path.getctime(file_path))
-                if now - file_creation_time > timedelta(minutes=5):
-                    os.remove(file_path)
-        time.sleep(60)  # Verifica a cada minuto
 
 @app.route('/')
 def index():
@@ -29,12 +17,18 @@ def download():
         url = request.form['url']
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            file_name = f"tiktok_{timestamp}.mp4"
+            file_path = os.path.join(app.config['DOWNLOAD_FOLDER'], file_name)
+
             ydl_opts = {
-                'outtmpl': os.path.join(app.config['DOWNLOAD_FOLDER'], f'%(title)s_{timestamp}.%(ext)s'),
+                'outtmpl': file_path,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                result = ydl.extract_info(url, download=True)
-                file_path = os.path.join(app.config['DOWNLOAD_FOLDER'], f"{result['title']}_{timestamp}.{result['ext']}")
+                ydl.download([url])
+
+            # Programar a exclusão do arquivo após 300 segundos (5 minutos)
+            Timer(300, lambda: os.remove(file_path)).start()
+
             return send_file(file_path, as_attachment=True)
         except Exception as e:
             return render_template('error.html', error_message=str(e))
@@ -56,8 +50,13 @@ def internal_server_error(e):
 if __name__ == "__main__":
     if not os.path.exists(app.config['DOWNLOAD_FOLDER']):
         os.makedirs(app.config['DOWNLOAD_FOLDER'])
-    
-    # Inicia a thread para deletar arquivos antigos
-    threading.Thread(target=delete_old_files, daemon=True).start()
 
+    # Remover arquivos antigos da pasta de downloads
+    for root, dirs, files in os.walk(app.config['DOWNLOAD_FOLDER']):
+        for file in files:
+            file_path = os.path.join(root, file)
+            file_age = datetime.now() - datetime.fromtimestamp(os.path.getctime(file_path))
+            if file_age.total_seconds() > 300:
+                os.remove(file_path)
+                
     app.run(debug=True, host='0.0.0.0')
